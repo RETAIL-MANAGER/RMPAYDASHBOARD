@@ -40,6 +40,7 @@ import com.retailmanager.rmpaydashboard.services.services.Payment.data.ItemATHM;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponseJSON;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponsePayment;
 import com.retailmanager.rmpaydashboard.utils.ConverterJson;
+import com.retailmanager.rmpaydashboard.utils.ZipCodeUtils;
 import org.modelmapper.ModelMapper;
 import org.modelmapper.TypeToken;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -292,8 +293,18 @@ public class InvoiceServices implements IInvoiceServices {
                     double result = BigDecimal.valueOf(totalAmount)
                             .setScale(2, RoundingMode.HALF_UP)
                             .doubleValue();
+                    // BlackStone exige zip code: se valida antes de cobrar
+                    String cardZipCode = ZipCodeUtils.normalize(
+                            objBusiness.getAddress() != null ? objBusiness.getAddress().getZipcode() : null);
+                    if (cardZipCode == null) {
+                        objEmailBodyData.setErrorMessage(ZipCodeUtils.INVALID_ZIP_MESSAGE);
+                        emailService.notifyErrorPayment(objEmailBodyData);
+                        HashMap<String, String> objZipError = new HashMap<String, String>();
+                        objZipError.put("msg", "The business does not have a valid 5-digit zip code. Update the business address before paying.");
+                        return new ResponseEntity<HashMap<String, String>>(objZipError, HttpStatus.NOT_ACCEPTABLE);
+                    }
                     respPayment = blackStoneService.paymentWithCreditCard(String.valueOf(result),
-                            objBusiness.getAddress().getZipcode(),
+                            cardZipCode,
                             prmPaymentInfo.getCreditcarnumber().replaceAll("-", ""),
                             prmPaymentInfo.getExpDateMonth() + prmPaymentInfo.getExpDateYear(),
                             prmPaymentInfo.getNameoncard(),
@@ -321,8 +332,19 @@ public class InvoiceServices implements IInvoiceServices {
                             .setCreditcarnumber("XXXX-XXXX-XXXX-" + objBusiness.getPaymentData().getLast4Digits());
                     objEmailBodyData.setExpDateMonth(objBusiness.getPaymentData().getExpDate().substring(0, 2));
                     objEmailBodyData.setExpDateYear(objBusiness.getPaymentData().getExpDate().substring(2, 4));
+                    // BlackStone exige zip code: se usa el zip guardado con el token.
+                    // Tokens antiguos sin zip se rechazan (decision aprobada): se debe registrar de nuevo la tarjeta.
+                    String tokenZipCode = ZipCodeUtils.normalize(objBusiness.getPaymentData().getZipCode());
+                    if (tokenZipCode == null) {
+                        objEmailBodyData.setErrorMessage(
+                                "The saved card has no zip code. Please register the card again.");
+                        emailService.notifyErrorPayment(objEmailBodyData);
+                        HashMap<String, String> objZipError = new HashMap<String, String>();
+                        objZipError.put("msg", "The saved card has no zip code. Please register the card again.");
+                        return new ResponseEntity<HashMap<String, String>>(objZipError, HttpStatus.NOT_ACCEPTABLE);
+                    }
                     respPayment = blackStoneService.paymentWithToken(String.valueOf(formato.format(totalAmount)),
-                            objBusiness.getAddress().getZipcode(),
+                            tokenZipCode,
                             objBusiness.getPaymentData().getToken(),
                             objBusiness.getPaymentData().getExpDate(),
                             objBusiness.getPaymentData().getNameOnCard(),
@@ -799,7 +821,8 @@ public class InvoiceServices implements IInvoiceServices {
         switch (prmPaymentInfo.getPaymethod()) {
             case "CREDIT-CARD":
                 try {
-                    ResponseJSON token = blackStoneService.getToken("190001",
+                    // Zip de prueba valido de 5 digitos (antes "190001", invalido)
+                    ResponseJSON token = blackStoneService.getToken("00901",
                             prmPaymentInfo.getCreditcarnumber().replaceAll("-", ""),
                             prmPaymentInfo.getExpDateMonth() + prmPaymentInfo.getExpDateYear(),
                             prmPaymentInfo.getNameoncard(),
@@ -814,7 +837,7 @@ public class InvoiceServices implements IInvoiceServices {
                      * prmPaymentInfo.getSecuritycode(), null, userTransactionNumber);
                      */
                     respPayment = blackStoneService.paymentWithToken(String.valueOf(formato.format(100)),
-                            "190001",
+                            "00901",
                             token.getToken(),
                             prmPaymentInfo.getExpDateMonth() + prmPaymentInfo.getExpDateYear(),
                             prmPaymentInfo.getNameoncard(),
@@ -1009,6 +1032,7 @@ public class InvoiceServices implements IInvoiceServices {
                 objPaymentData.setCvn(prmRegistry.getSecuritycode());
                 objPaymentData.setLast4Digits(prmRegistry.getCreditcarnumber().replaceAll("-", "")
                         .substring(prmRegistry.getCreditcarnumber().length() - 4));
+                objPaymentData.setZipCode(prmRegistry.getZipCode());
                 objBusiness.setPaymentData(objPaymentData);
                 objPaymentData.setUsingAutomaticPayment(prmRegistry.isUsingAutomaticPayment());
                 this.businessRepository.save(objBusiness);
@@ -1083,6 +1107,13 @@ public class InvoiceServices implements IInvoiceServices {
             msgError = "The expiration date year is required";
             return null;
         }
+        // BlackStone exige zip code de 5 digitos
+        String zipCode = ZipCodeUtils.normalize(prmRegistry.getZipCode());
+        if (zipCode == null) {
+            msgError = ZipCodeUtils.INVALID_ZIP_MESSAGE;
+            return null;
+        }
+        prmRegistry.setZipCode(zipCode);
 
         return prmRegistry;
 

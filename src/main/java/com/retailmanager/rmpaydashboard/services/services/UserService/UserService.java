@@ -37,6 +37,7 @@ import com.retailmanager.rmpaydashboard.services.services.EmailService.EmailBody
 import com.retailmanager.rmpaydashboard.services.services.EmailService.IEmailService;
 import com.retailmanager.rmpaydashboard.services.services.Payment.IATHMovilService;
 import com.retailmanager.rmpaydashboard.services.services.Payment.IBlackStoneService;
+import com.retailmanager.rmpaydashboard.utils.ZipCodeUtils;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ATHMPaymentReqData;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ATHMPaymentResponse;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ItemATHM;
@@ -493,8 +494,16 @@ public class UserService implements IUserService {
 
                 switch (prmRegistry.getPaymethod()) {
                     case "CREDIT-CARD":
+                        // BlackStone exige zip code: se valida antes de cobrar
+                        String zipCode = ZipCodeUtils.normalize(
+                                prmRegistry.getAddress() != null ? prmRegistry.getAddress().getZipcode() : null);
+                        if (zipCode == null) {
+                            HashMap<String, String> objZipError = new HashMap<String, String>();
+                            objZipError.put("msg", ZipCodeUtils.INVALID_ZIP_MESSAGE);
+                            return new ResponseEntity<HashMap<String, String>>(objZipError, HttpStatus.BAD_REQUEST);
+                        }
                         respPayment = blackStoneService.paymentWithCreditCard(String.valueOf(formato.format(amount)),
-                                prmRegistry.getAddress().getZipcode(),
+                                zipCode,
                                 prmRegistry.getCreditcarnumber().replaceAll("-", ""),
                                 prmRegistry.getExpDateMonth() + prmRegistry.getExpDateYear(),
                                 prmRegistry.getNameoncard(),
@@ -509,7 +518,7 @@ public class UserService implements IUserService {
                         }
                         if (prmRegistry.isAutomaticPayments()) {
                             try {
-                                ResponseJSON objToken = blackStoneService.getToken(prmRegistry.getAddress().getZipcode(),
+                                ResponseJSON objToken = blackStoneService.getToken(zipCode,
                                         prmRegistry.getCreditcarnumber().replaceAll("-", ""),
                                         prmRegistry.getExpDateMonth() + prmRegistry.getExpDateYear(),
                                         prmRegistry.getNameoncard(),
@@ -522,6 +531,7 @@ public class UserService implements IUserService {
                                     objPaymentData.setCvn(prmRegistry.getSecuritycode());
                                     objPaymentData.setLast4Digits(prmRegistry.getCreditcarnumber().replaceAll("-", "").substring(prmRegistry.getCreditcarnumber().length() - 4));
                                     objPaymentData.setUsingAutomaticPayment(true);
+                                    objPaymentData.setZipCode(zipCode);
                                 }
 
                             } catch (Exception e) {

@@ -27,6 +27,9 @@ public class PaymentData {
     @Column(nullable = false)
     private String last4Digits;
     //Cómo le seteo un vaor por default? 
-    @Column(nullable = true) 
+    @Column(nullable = true)
     private boolean usingAutomaticPayment;
+    /** Zip code enviado a BlackStone al crear el token; se reutiliza en los cobros con token. */
+    @Column(nullable = true, length = 10)
+    private String zipCode;
 }

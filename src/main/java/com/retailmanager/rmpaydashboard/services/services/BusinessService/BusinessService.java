@@ -69,6 +69,7 @@ import com.retailmanager.rmpaydashboard.services.services.EmailService.EmailBody
 import com.retailmanager.rmpaydashboard.services.services.EmailService.IEmailService;
 import com.retailmanager.rmpaydashboard.services.services.FileServices.IFileService;
 import com.retailmanager.rmpaydashboard.services.services.Payment.IBlackStoneService;
+import com.retailmanager.rmpaydashboard.utils.ZipCodeUtils;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponseJSON;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponsePayment;
 import com.retailmanager.rmpaydashboard.services.services.TerminalService.ITerminalService;
@@ -319,8 +320,16 @@ public class BusinessService implements IBusinessService {
                 amount=amount+stateTax;
                 switch (prmBusiness.getPaymethod()){
                     case "CREDIT-CARD":
-                        respPayment=blackStoneService.paymentWithCreditCard(String.valueOf(formato.format(amount)), 
-                        prmBusiness.getAddress().getZipcode(), 
+                        // BlackStone exige zip code: se valida antes de cobrar
+                        String zipCode = ZipCodeUtils.normalize(
+                                prmBusiness.getAddress() != null ? prmBusiness.getAddress().getZipcode() : null);
+                        if (zipCode == null) {
+                            HashMap<String, String> objZipError = new HashMap<String, String>();
+                            objZipError.put("msg", ZipCodeUtils.INVALID_ZIP_MESSAGE);
+                            return new ResponseEntity<HashMap<String, String>>(objZipError, HttpStatus.BAD_REQUEST);
+                        }
+                        respPayment=blackStoneService.paymentWithCreditCard(String.valueOf(formato.format(amount)),
+                        zipCode,
                         prmBusiness.getCreditcarnumber().replaceAll("-", ""),
                         prmBusiness.getExpDateMonth() + prmBusiness.getExpDateYear(), 
                         prmBusiness.getNameoncard(), 
@@ -334,7 +343,7 @@ public class BusinessService implements IBusinessService {
                         }
                         if(prmBusiness.isAutomaticPayments()){
                             try{
-                                ResponseJSON objToken=blackStoneService.getToken(prmBusiness.getAddress().getZipcode(),
+                                ResponseJSON objToken=blackStoneService.getToken(zipCode,
                                 prmBusiness.getCreditcarnumber().replaceAll("-", ""),
                                 prmBusiness.getExpDateMonth() + prmBusiness.getExpDateYear(),
                                 prmBusiness.getNameoncard(),
@@ -346,6 +355,7 @@ public class BusinessService implements IBusinessService {
                                     objPaymentData.setNameOnCard(prmBusiness.getNameoncard());
                                     objPaymentData.setCvn(prmBusiness.getSecuritycode());
                                     objPaymentData.setLast4Digits(prmBusiness.getCreditcarnumber().replaceAll("-", "").substring(prmBusiness.getCreditcarnumber().length()-4));
+                                    objPaymentData.setZipCode(zipCode);
                                     objEmailBodyData.setAutomaticPayments(true);
                                     objBusiness.setPaymentData(objPaymentData);
 

@@ -20,6 +20,7 @@ import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponseJ
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponsePayment;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.TokenPayment;
 import com.retailmanager.rmpaydashboard.utils.ConverterJson;
+import com.retailmanager.rmpaydashboard.utils.ZipCodeUtils;
 
 @Service
 public class BlackStone implements IBlackStoneService {
@@ -42,6 +43,11 @@ public class BlackStone implements IBlackStoneService {
     public ResponsePayment paymentWithCreditCard(String Amount, String ZipCode, String CardNumber, String ExpDate,
             String NameOnCard,
             String CVN, String Track2, String UserTransactionNumber) throws ConsumeAPIException {
+        // BlackStone exige zip code: nunca se envia nulo ni invalido
+        ZipCode = ZipCodeUtils.normalize(ZipCode);
+        if (ZipCode == null) {
+            throw new ConsumeAPIException(ZipCodeUtils.INVALID_ZIP_MESSAGE, 400);
+        }
         ReqBlackStoneData reqBS = new ReqBlackStoneData();
 
         try {
@@ -155,6 +161,12 @@ public class BlackStone implements IBlackStoneService {
     @Override
     public ResponseJSON getToken(String ZipCode, String CardNumber, String ExpDate, String NameOnCard, String CVN,
             String Track2, String UserTransactionNumber) {
+        // BlackStone exige zip code: nunca se envia nulo ni invalido
+        ZipCode = ZipCodeUtils.normalize(ZipCode);
+        if (ZipCode == null) {
+            System.err.println("Error: BlackStone.getToken(): " + ZipCodeUtils.INVALID_ZIP_MESSAGE);
+            return null;
+        }
         String miIp = "";
         try {
             InetAddress ip = InetAddress.getLocalHost();
@@ -239,6 +251,11 @@ public class BlackStone implements IBlackStoneService {
     @Override
     public ResponsePayment paymentWithToken(String Amount, String ZipCode, String token, String ExpDate,
             String NameOnCard, String CVN, String Track2, String UserTransactionNumber) throws ConsumeAPIException {
+        // BlackStone exige zip code: nunca se envia nulo ni invalido
+        ZipCode = ZipCodeUtils.normalize(ZipCode);
+        if (ZipCode == null) {
+            throw new ConsumeAPIException(ZipCodeUtils.INVALID_ZIP_MESSAGE, 400);
+        }
         ReqBlackStoneData reqBS = new ReqBlackStoneData();
 
         try {

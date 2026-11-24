@@ -69,6 +69,7 @@ import com.retailmanager.rmpaydashboard.services.services.EmailService.EmailBody
 import com.retailmanager.rmpaydashboard.services.services.EmailService.IEmailService;
 import com.retailmanager.rmpaydashboard.services.services.FileServices.IFileService;
 import com.retailmanager.rmpaydashboard.services.services.Payment.IBlackStoneService;
+import com.retailmanager.rmpaydashboard.utils.ZipCodeUtils;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponseJSON;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponsePayment;
 import com.retailmanager.rmpaydashboard.services.services.TerminalService.ITerminalService;
@@ -319,8 +320,16 @@ public class BusinessService implements IBusinessService {
                 amount=amount+stateTax;
                 switch (prmBusiness.getPaymethod()){
                     case "CREDIT-CARD":
-                        respPayment=blackStoneService.paymentWithCreditCard(String.valueOf(formato.format(amount)), 
-                        prmBusiness.getAddress().getZipcode(), 
+                        // BlackStone exige zip code: se valida antes de cobrar
+                        String zipCode = ZipCodeUtils.normalize(
+                                prmBusiness.getAddress() != null ? prmBusiness.getAddress().getZipcode() : null);
+                        if (zipCode == null) {
+                            HashMap<String, String> objZipError = new HashMap<String, String>();
+                            objZipError.put("msg", ZipCodeUtils.INVALID_ZIP_MESSAGE);
+                            return new ResponseEntity<HashMap<String, String>>(objZipError, HttpStatus.BAD_REQUEST);
+                        }
+                        respPayment=blackStoneService.paymentWithCreditCard(String.valueOf(formato.format(amount)),
+                        zipCode,
                         prmBusiness.getCreditcarnumber().replaceAll("-", ""),
                         prmBusiness.getExpDateMonth() + prmBusiness.getExpDateYear(), 
                         prmBusiness.getNameoncard(), 
@@ -334,7 +343,7 @@ public class BusinessService implements IBusinessService {
                         }
                         if(prmBusiness.isAutomaticPayments()){
                             try{
-                                ResponseJSON objToken=blackStoneService.getToken(prmBusiness.getAddress().getZipcode(),
+                                ResponseJSON objToken=blackStoneService.getToken(zipCode,
                                 prmBusiness.getCreditcarnumber().replaceAll("-", ""),
                                 prmBusiness.getExpDateMonth() + prmBusiness.getExpDateYear(),
                                 prmBusiness.getNameoncard(),
@@ -346,6 +355,7 @@ public class BusinessService implements IBusinessService {
                                     objPaymentData.setNameOnCard(prmBusiness.getNameoncard());
                                     objPaymentData.setCvn(prmBusiness.getSecuritycode());
                                     objPaymentData.setLast4Digits(prmBusiness.getCreditcarnumber().replaceAll("-", "").substring(prmBusiness.getCreditcarnumber().length()-4));
+                                    objPaymentData.setZipCode(zipCode);
                                     objEmailBodyData.setAutomaticPayments(true);
                                     objBusiness.setPaymentData(objPaymentData);
 
@@ -758,32 +768,8 @@ public class BusinessService implements IBusinessService {
              objBusiness.setDiscount(prmBusiness.getDiscount());
              objBusiness.setName(prmBusiness.getName());
              objBusiness.setServiceId(serviceId);
-             if(objBusiness.getLogo()!=null && prmBusiness.getLogo()!=null && !objBusiness.getLogo().equals(prmBusiness.getLogo())){
-                if(objBusiness.getLogo()!=null){
-                    this.fileService.deleteImage(objBusiness.getLogo());
-                }
-                objBusiness.setLogo(prmBusiness.getLogo());
-             }else{
-                if(objBusiness.getLogo()!=null && prmBusiness.getLogo()==null){
-                    this.fileService.deleteImage(objBusiness.getLogo());
-                    objBusiness.setLogo(null);
-                }else if(objBusiness.getLogo()==null && prmBusiness.getLogo()!=null){
-                    objBusiness.setLogo(prmBusiness.getLogo());
-                }
-             }
-             if(objBusiness.getLogoAth()!=null && prmBusiness.getLogoAth()!=null && !objBusiness.getLogoAth().equals(prmBusiness.getLogoAth())){
-                if(objBusiness.getLogoAth()!=null){
-                    this.fileService.deleteImage(objBusiness.getLogoAth());
-                }
-                objBusiness.setLogoAth(prmBusiness.getLogoAth());
-             }else{
-                if(objBusiness.getLogoAth()!=null && prmBusiness.getLogoAth()==null){
-                    this.fileService.deleteImage(objBusiness.getLogoAth());
-                    objBusiness.setLogoAth(null);
-                }else if(objBusiness.getLogoAth()==null && prmBusiness.getLogoAth()!=null){
-                    objBusiness.setLogoAth(prmBusiness.getLogoAth());
-                }
-             }
+             objBusiness.setLogo(replaceBusinessImage(objBusiness.getLogo(), prmBusiness.getLogo()));
+             objBusiness.setLogoAth(replaceBusinessImage(objBusiness.getLogoAth(), prmBusiness.getLogoAth()));
              if(objBusiness!=null){
                 objBusiness=this.serviceDBBusiness.save(objBusiness);
                 if (!changes.isEmpty()) {
@@ -804,11 +790,23 @@ public class BusinessService implements IBusinessService {
         }
         return rta;
     }
+    private Long replaceBusinessImage(Long currentId, Long requestedId) {
+        // Legacy businesses use zero to represent an image that has not been configured.
+        Long nextId = requestedId != null && requestedId == 0L ? null : requestedId;
+        if (currentId != null && currentId != 0L && !Objects.equals(currentId, nextId)) {
+            this.fileService.deleteImage(currentId);
+        }
+        return nextId;
+    }
 private Map<String, Object> detectBusinessChanges(
         Business currentBusiness,
         BusinessDTO newBusinessData) {
 
     Map<String, Object> changes = new HashMap<>();
+
+    if (currentBusiness==null){
+        return changes;
+    }
 
     addChangeIfDifferent(
             changes,
@@ -1144,8 +1142,8 @@ private Map<String, Object> createChange(
             if(terminal.getRegisterDate()!=null && terminal.getLastPayment()!=null && terminalService != null){
                 totalSales+=terminal.getLastPaymentValue();
 
-    List<Business> listBusiness = this.serviceDBBusiness.findAllByRegistrations(starDate, endDate);
-    List<Terminal> listTerminal = this.serviceDBTerminal.findAllByActivations(starDate, endDate);
+                boolean sameMonth = YearMonth.from(terminal.getRegisterDate().atZone(ZoneOffset.UTC))
+                        .equals(YearMonth.from(terminal.getLastPayment().atZone(ZoneOffset.UTC)));
 
                 if(sameMonth){
                     if(terminal.isPrincipal()){

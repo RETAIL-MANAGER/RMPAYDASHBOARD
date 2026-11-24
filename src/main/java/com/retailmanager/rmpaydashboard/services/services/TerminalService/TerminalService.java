@@ -25,6 +25,7 @@ import com.retailmanager.rmpaydashboard.services.services.ActivityLogService.IAc
 import com.retailmanager.rmpaydashboard.services.services.EmailService.EmailBodyData;
 import com.retailmanager.rmpaydashboard.services.services.EmailService.IEmailService;
 import com.retailmanager.rmpaydashboard.services.services.Payment.IBlackStoneService;
+import com.retailmanager.rmpaydashboard.utils.ZipCodeUtils;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponseJSON;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponsePayment;
 import org.modelmapper.ModelMapper;
@@ -382,10 +383,18 @@ public class TerminalService implements ITerminalService {
                 objTerminal.setBusiness(existBusiness.get());
                 switch (prmTerminal.getPaymethod()) {
                     case "CREDIT-CARD":
+                        // BlackStone exige zip code: se valida antes de cobrar
+                        String zipCode = ZipCodeUtils.normalize(
+                                objBusiness.getAddress() != null ? objBusiness.getAddress().getZipcode() : null);
+                        if (zipCode == null) {
+                            HashMap<String, String> objZipError = new HashMap<String, String>();
+                            objZipError.put("msg", ZipCodeUtils.INVALID_ZIP_MESSAGE);
+                            return new ResponseEntity<HashMap<String, String>>(objZipError, HttpStatus.BAD_REQUEST);
+                        }
                         try {
                             respPayment = blackStoneService.paymentWithCreditCard(
                                     String.valueOf(formato.format(amount)),
-                                    objBusiness.getAddress().getZipcode(),
+                                    zipCode,
                                     prmTerminal.getCreditcarnumber().replaceAll("-", ""),
                                     prmTerminal.getExpDateMonth() + prmTerminal.getExpDateYear(),
                                     prmTerminal.getNameoncard(),
@@ -406,7 +415,7 @@ public class TerminalService implements ITerminalService {
                         }
                         if (prmTerminal.isAutomaticPayments()) {
                             try {
-                                ResponseJSON objToken = blackStoneService.getToken(objBusiness.getAddress().getZipcode(),
+                                ResponseJSON objToken = blackStoneService.getToken(zipCode,
                                         prmTerminal.getCreditcarnumber().replaceAll("-", ""),
                                         prmTerminal.getExpDateMonth() + prmTerminal.getExpDateYear(),
                                         prmTerminal.getNameoncard(),
@@ -418,6 +427,7 @@ public class TerminalService implements ITerminalService {
                                     objPaymentData.setNameOnCard(prmTerminal.getNameoncard());
                                     objPaymentData.setCvn(prmTerminal.getSecuritycode());
                                     objPaymentData.setLast4Digits(prmTerminal.getCreditcarnumber().replaceAll("-", "").substring(prmTerminal.getCreditcarnumber().length() - 4));
+                                    objPaymentData.setZipCode(zipCode);
                                     objBusiness.setPaymentData(objPaymentData);
                                 }
 

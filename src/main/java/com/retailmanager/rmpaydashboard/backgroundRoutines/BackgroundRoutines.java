@@ -41,11 +41,11 @@ public class BackgroundRoutines extends Thread{
                 System.out.println("ROUTINES IN BACKGROUND RUNNING:"+hour+":"+minute+" "+now.toString());
                 // Coloca aquí el código que deseas que se ejecute en el evento diario
                 backgroundRoutinesService.deactivateExpiredTerminals();
-/* 
+
                 backgroundRoutinesService.priorNotificaionEmail();
                 backgroundRoutinesService.lastDayNotificaionEmail();
                 backgroundRoutinesService.afterNotificaionEmail();
-                backgroundRoutinesService.automaticPayments();  */
+                backgroundRoutinesService.automaticPayments();
                 //AQUI LAS RUTINAS
             }
         };

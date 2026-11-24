@@ -4,6 +4,7 @@ package com.retailmanager.rmpaydashboard.services.services.TerminalService;
 import org.springframework.http.ResponseEntity;
 
 import com.retailmanager.rmpaydashboard.services.DTO.BuyTerminalDTO;
+import com.retailmanager.rmpaydashboard.services.DTO.GraceTimeDTO;
 import com.retailmanager.rmpaydashboard.services.DTO.TerminalDTO;
 
 
@@ -16,6 +17,8 @@ public interface ITerminalService {
     public ResponseEntity<?> findById(String terminalId);
     public ResponseEntity<?> findBySerial(String  serial);
     public ResponseEntity<?> updateEnable(String terminalId, boolean enable);
-    public ResponseEntity<?> getExpiredTerminals(Long businessId); 
+    public ResponseEntity<?> getExpiredTerminals(Long businessId);
+    public ResponseEntity<?> grantGraceTime(String terminalId, GraceTimeDTO prmGraceTime, String adminUsername);
+    public ResponseEntity<?> grantGraceTimeToBusiness(Long businessId, GraceTimeDTO prmGraceTime, String adminUsername);
     public String getTerminalId();
 }

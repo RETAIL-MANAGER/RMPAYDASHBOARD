@@ -2,7 +2,10 @@ package com.retailmanager.rmpaydashboard.controller;
 
 
 import org.springframework.beans.factory.annotation.Autowired;
+import java.security.Principal;
+
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.retailmanager.rmpaydashboard.services.DTO.BuyTerminalDTO;
+import com.retailmanager.rmpaydashboard.services.DTO.GraceTimeDTO;
 import com.retailmanager.rmpaydashboard.services.DTO.TerminalDTO;
 import com.retailmanager.rmpaydashboard.services.services.TerminalService.ITerminalService;
 
@@ -101,5 +105,31 @@ public class TerminalController {
     @GetMapping("/terminals/expiredByBusiness/{businessId}")
     public ResponseEntity<?> getExpiredTerminals(@Valid @PathVariable Long businessId){
         return this.terminalService.getExpiredTerminals(businessId);
+    }
+    /**
+     * Otorga tiempo de gracia (tiempo gratis) a una terminal. Solo ROLE_MANAGER.
+     *
+     * @param  terminalId    terminal a la que se otorga el tiempo
+     * @param  prmGraceTime  cantidad, unidad (DAYS / HOURS) y motivo
+     * @param  principal     administrador autenticado
+     * @return               fecha de expiración anterior y nueva
+     */
+    @PreAuthorize("hasAuthority('ROLE_MANAGER')")
+    @PostMapping("/terminals/{terminalId}/grace")
+    public ResponseEntity<?> grantGraceTime(@Valid @PathVariable String terminalId, @Valid @RequestBody GraceTimeDTO prmGraceTime, Principal principal){
+        return this.terminalService.grantGraceTime(terminalId, prmGraceTime, principal != null ? principal.getName() : null);
+    }
+    /**
+     * Otorga tiempo de gracia (tiempo gratis) a todas las terminales de un negocio. Solo ROLE_MANAGER.
+     *
+     * @param  businessId    negocio cuyas terminales reciben el tiempo
+     * @param  prmGraceTime  cantidad, unidad (DAYS / HOURS) y motivo
+     * @param  principal     administrador autenticado
+     * @return               fecha de expiración anterior y nueva por terminal
+     */
+    @PreAuthorize("hasAuthority('ROLE_MANAGER')")
+    @PostMapping("/business/{businessId}/grace")
+    public ResponseEntity<?> grantGraceTimeToBusiness(@Valid @PathVariable Long businessId, @Valid @RequestBody GraceTimeDTO prmGraceTime, Principal principal){
+        return this.terminalService.grantGraceTimeToBusiness(businessId, prmGraceTime, principal != null ? principal.getName() : null);
     }
 }

@@ -19,12 +19,14 @@ import com.retailmanager.rmpaydashboard.repositories.ShiftReporsitory;
 import com.retailmanager.rmpaydashboard.repositories.TerminalRepository;
 import com.retailmanager.rmpaydashboard.services.DTO.ActivityLogCreateDTO;
 import com.retailmanager.rmpaydashboard.services.DTO.BuyTerminalDTO;
+import com.retailmanager.rmpaydashboard.services.DTO.GraceTimeDTO;
 import com.retailmanager.rmpaydashboard.services.DTO.TerminalDTO;
 import com.retailmanager.rmpaydashboard.services.DTO.TerminalsDoPaymentDTO;
 import com.retailmanager.rmpaydashboard.services.services.ActivityLogService.IActivityLogService;
 import com.retailmanager.rmpaydashboard.services.services.EmailService.EmailBodyData;
 import com.retailmanager.rmpaydashboard.services.services.EmailService.IEmailService;
 import com.retailmanager.rmpaydashboard.services.services.Payment.IBlackStoneService;
+import com.retailmanager.rmpaydashboard.utils.GraceTimeUtils;
 import com.retailmanager.rmpaydashboard.utils.ZipCodeUtils;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponseJSON;
 import com.retailmanager.rmpaydashboard.services.services.Payment.data.ResponsePayment;
@@ -867,4 +869,139 @@ public class TerminalService implements ITerminalService {
 
     activityLogService.createActivity(activity);
 }
+
+    /**
+     * Otorga tiempo de gracia (tiempo gratis) a una terminal. Solo para administradores.
+     * Si la terminal está vigente, el tiempo se suma a su fecha de expiración; si está vencida
+     * o desactivada, se reactiva y el tiempo se cuenta desde ahora.
+     *
+     * @param terminalId    terminal a la que se otorga el tiempo
+     * @param prmGraceTime  cantidad, unidad (DAYS / HOURS) y motivo
+     * @param adminUsername usuario administrador que otorga el tiempo (auditoría)
+     * @return 200 con la fecha anterior y la nueva; 400 si la cantidad no es válida
+     */
+    @Override
+    @Transactional
+    public ResponseEntity<?> grantGraceTime(String terminalId, GraceTimeDTO prmGraceTime, String adminUsername) {
+        Duration graceDuration = GraceTimeUtils.toDuration(prmGraceTime.getAmount(), prmGraceTime.getUnit());
+        if (graceDuration == null) {
+            return invalidGraceTimeResponse(GraceTimeUtils.INVALID_GRACE_MESSAGE);
+        }
+        Terminal objTerminal = this.serviceDBTerminal.findById(terminalId)
+                .orElseThrow(() -> new EntidadNoExisteException(
+                        "El Terminal con terminalId " + terminalId + " no existe en la Base de datos"));
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        result.add(applyGraceTime(objTerminal, graceDuration, prmGraceTime, adminUsername));
+        return new ResponseEntity<List<Map<String, Object>>>(result, HttpStatus.OK);
+    }
+
+    /**
+     * Otorga tiempo de gracia a todas las terminales de un negocio. Solo para administradores.
+     *
+     * @param businessId    negocio cuyas terminales reciben el tiempo
+     * @param prmGraceTime  cantidad, unidad (DAYS / HOURS) y motivo
+     * @param adminUsername usuario administrador que otorga el tiempo (auditoría)
+     * @return 200 con el resultado por terminal; 400 si la cantidad no es válida o no hay terminales
+     */
+    @Override
+    @Transactional
+    public ResponseEntity<?> grantGraceTimeToBusiness(Long businessId, GraceTimeDTO prmGraceTime, String adminUsername) {
+        Duration graceDuration = GraceTimeUtils.toDuration(prmGraceTime.getAmount(), prmGraceTime.getUnit());
+        if (graceDuration == null) {
+            return invalidGraceTimeResponse(GraceTimeUtils.INVALID_GRACE_MESSAGE);
+        }
+        Business objBusiness = this.serviceDBBusiness.findById(businessId)
+                .orElseThrow(() -> new EntidadNoExisteException(
+                        "El business con businessId " + businessId + " no existe en la Base de datos"));
+        List<Terminal> terminals = this.serviceDBTerminal.findByBusiness(objBusiness);
+        if (terminals == null || terminals.isEmpty()) {
+            return invalidGraceTimeResponse("El negocio no tiene terminales");
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Terminal objTerminal : terminals) {
+            result.add(applyGraceTime(objTerminal, graceDuration, prmGraceTime, adminUsername));
+        }
+        return new ResponseEntity<List<Map<String, Object>>>(result, HttpStatus.OK);
+    }
+
+    private ResponseEntity<?> invalidGraceTimeResponse(String message) {
+        Map<String, String> error = new HashMap<>();
+        error.put("message", message);
+        return new ResponseEntity<Map<String, String>>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    private Map<String, Object> applyGraceTime(Terminal objTerminal, Duration graceDuration,
+            GraceTimeDTO prmGraceTime, String adminUsername) {
+        Instant previousExpirationDate = objTerminal.getExpirationDate();
+        boolean previousEnable = objTerminal.isEnable();
+        Instant newExpirationDate = GraceTimeUtils.calculateExpirationDate(
+                previousExpirationDate, graceDuration, Instant.now());
+
+        objTerminal.setExpirationDate(newExpirationDate);
+        objTerminal.setEnable(true);
+        objTerminal = this.serviceDBTerminal.save(objTerminal);
+
+        // Igual que al registrar un pago: con nueva fecha de expiración se reinician los avisos de vencimiento.
+        Business objBusiness = objTerminal.getBusiness();
+        if (objTerminal.isPrincipal() && objBusiness != null) {
+            objBusiness.setPriorNotification(null);
+            objBusiness.setAfterNotification(null);
+            objBusiness.setLastDayNotification(null);
+            this.serviceDBBusiness.save(objBusiness);
+        }
+
+        registerGraceTimeActivity(objTerminal, prmGraceTime, adminUsername,
+                previousExpirationDate, newExpirationDate, previousEnable);
+
+        Map<String, Object> item = new HashMap<>();
+        item.put("terminalId", objTerminal.getTerminalId());
+        item.put("name", objTerminal.getName());
+        item.put("previousExpirationDate", previousExpirationDate);
+        item.put("newExpirationDate", newExpirationDate);
+        item.put("previousEnable", previousEnable);
+        item.put("enable", objTerminal.isEnable());
+        return item;
+    }
+
+    private void registerGraceTimeActivity(Terminal terminal, GraceTimeDTO prmGraceTime, String adminUsername,
+            Instant previousExpirationDate, Instant newExpirationDate, boolean previousEnable) {
+        String unitText = GraceTimeDTO.UNIT_HOURS.equals(prmGraceTime.getUnit()) ? "hora(s)" : "día(s)";
+        String businessName = terminal.getBusiness() != null ? terminal.getBusiness().getName() : "";
+
+        ActivityLogCreateDTO activity = new ActivityLogCreateDTO();
+        activity.setActivityType(ActivityType.TERMINAL_GRACE_GRANTED);
+        activity.setTitle("Tiempo de gracia otorgado");
+        String detail = "Se otorgaron " + prmGraceTime.getAmount() + " " + unitText
+                + " a la terminal " + terminal.getName() + " de " + businessName
+                + " por " + adminUsername;
+        activity.setDetail(detail.length() > 500 ? detail.substring(0, 500) : detail);
+        activity.setEntityType(ActivityEntityType.TERMINAL);
+        activity.setEntityId(terminal.getTerminalId());
+
+        if (terminal.getBusiness() != null) {
+            activity.setBusinessId(terminal.getBusiness().getBusinessId());
+            if (terminal.getBusiness().getUser() != null) {
+                activity.setUserId(terminal.getBusiness().getUser().getUserID());
+                activity.setUserName(terminal.getBusiness().getUser().getName());
+            }
+        }
+
+        Map<String, Object> additionalData = new HashMap<>();
+        additionalData.put("terminalId", terminal.getTerminalId());
+        additionalData.put("terminalName", terminal.getName());
+        additionalData.put("amount", prmGraceTime.getAmount());
+        additionalData.put("unit", prmGraceTime.getUnit());
+        additionalData.put("reason", prmGraceTime.getReason());
+        additionalData.put("grantedBy", adminUsername);
+        additionalData.put("previousExpirationDate",
+                previousExpirationDate != null ? previousExpirationDate.toString() : null);
+        additionalData.put("newExpirationDate", newExpirationDate.toString());
+        additionalData.put("previousStatus", previousEnable ? "ACTIVATED" : "DEACTIVATED");
+        additionalData.put("newStatus", "ACTIVATED");
+        activity.setAdditionalData(additionalData);
+
+        activityLogService.createActivity(activity);
+    }
 }

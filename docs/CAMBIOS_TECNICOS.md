@@ -4,6 +4,58 @@ Registro fechado de archivos, clases, métodos, validaciones, base de datos, con
 
 ---
 
+## 2026-11-24 — Tiempo de gracia (tiempo gratis) otorgado por administrador
+
+**Motivo:** que el administrador pueda extender o reactivar terminales por días u horas sin registrar un pago.
+
+### Backend (`rmpaydashboard`)
+
+| Archivo | Tipo | Cambio |
+|---|---|---|
+| `services/DTO/GraceTimeDTO.java` | NUEVO | `amount` (`@NotNull`, `@Min(1)`), `unit` (`DAYS` \| `HOURS`), `reason` (`@NotBlank`, máx. 250). Constantes `MAX_DAYS = 30` y `MAX_HOURS = 720`. |
+| `utils/GraceTimeUtils.java` | NUEVO | `toDuration(amount, unit)` devuelve `null` si el valor es inválido o supera el tope. `calculateExpirationDate(actual, gracia, ahora)` suma a la fecha actual si sigue vigente y, si no, cuenta desde ahora. |
+| `models/enums/ActivityType.java` | MODIFICADO | Nuevo valor `TERMINAL_GRACE_GRANTED`, agregado al final. Ningún valor se renombró. |
+| `services/services/TerminalService/ITerminalService.java` | MODIFICADO | Nuevos métodos `grantGraceTime(String, GraceTimeDTO, String)` y `grantGraceTimeToBusiness(Long, GraceTimeDTO, String)`. Las firmas existentes no cambian. |
+| `services/services/TerminalService/TerminalService.java` | MODIFICADO | Implementación `@Transactional` de los dos métodos, más los privados `applyGraceTime`, `registerGraceTimeActivity` e `invalidGraceTimeResponse`. Fija `enable = true` y la nueva `expirationDate`. Si la terminal es la principal, pone `null` en `priorNotification`, `lastDayNotification` y `afterNotification` del negocio, igual que `doPayment`. Responde 200 con `[{terminalId, name, previousExpirationDate, newExpirationDate, previousEnable, enable}]`, o 400 `{"message": ...}`. |
+| `controller/TerminalController.java` | MODIFICADO | `POST /api/terminals/{terminalId}/grace` y `POST /api/business/{businessId}/grace`, los dos con `@PreAuthorize("hasAuthority('ROLE_MANAGER')")`. El usuario administrador sale de `Principal`. |
+| `src/test/.../GraceTimeUtilsTest.java` | NUEVO | 5 pruebas: límites, valores inválidos, terminal vigente, vencida y sin fecha. |
+
+**Auditoría:** `activity_log` con `entity_type = TERMINAL`. `userId` y `userName` corresponden al dueño del negocio, como en los demás registros. El administrador queda en `additional_data.grantedBy` y en `detail`. `additional_data` también guarda `amount`, `unit`, `reason`, `previousExpirationDate`, `newExpirationDate`, `previousStatus` y `newStatus`. El historial se consulta con el endpoint existente `GET /api/activity-logs/type/TERMINAL_GRACE_GRANTED` o con `GET /api/activity-logs/business/{id}`.
+
+**Contrato de la API:** solo se agregaron dos endpoints. Un usuario sin `ROLE_MANAGER` recibe 401 (handler `AccessDeniedException` existente). Si falla la validación del DTO, la respuesta es 400 con un mapa campo → mensaje (handler existente).
+
+### Frontend (`FrontWebServiceRMpay`)
+
+| Archivo | Cambio |
+|---|---|
+| `src/app/services/terminal.service.ts` | Nuevos `grantGraceTime(terminalId, body)` y `grantGraceTimeToBusiness(businessId, body)`. |
+| `components/pages/client/edit-client/edit-client.component.ts` | `TerminalService` se obtiene con `inject()`, así que el constructor no cambia. Se agregaron `isManager` (rol `ROLE_MANAGER` leído del token con `LoginService.getUser()`), `openGraceTimeModal(terminal?)` (modal SweetAlert con cantidad, unidad, motivo y vista previa de la fecha), `grantGraceTime` y los auxiliares de cálculo y de mensajes de error. Al terminar, actualiza la fecha y el estado de las terminales en la tabla. |
+| `.../edit-client.component.html` | Columna "Acciones" con el botón "Dar gracia" y el botón "Gracia a todas" en el encabezado, los dos solo para administradores. La fecha de expiración ahora muestra la hora (`dd/MM/yyyy HH:mm`). |
+| `.../edit-client.component.css`, `src/styles.scss` | Estilos del encabezado y del modal. Van en el archivo global porque SweetAlert se dibuja fuera del componente. |
+
+### Base de datos / scripts
+- `docs/sql/2026-11-24_tiempo_de_gracia.sql`: hay que ejecutarlo **antes de desplegar**. Hibernate 6.4 creó `activity_log` con un CHECK sobre `activity_type` que solo admite los valores de entonces, y `ddl-auto=update` no lo actualiza. El script busca la restricción por columna, porque su nombre es autogenerado y cambia entre bases. La elimina y la vuelve a crear como `CK_activity_log_activity_type` con el valor nuevo. Es idempotente e incluye una consulta de historial de solo lectura.
+
+### Riesgos
+- Las gracias en horas se aplican en la próxima corrida diaria de `deactivateExpiredTerminals`. La rutina no se modificó.
+- La gracia no cambia `Business.enable`. Un negocio desactivado manualmente sigue desactivado.
+- Los cobros automáticos (`findTerminalsForPayment`, `expirationDate <= hoy`) se mueven a la nueva fecha.
+- Si el cliente paga mientras dura la gracia, la duración pagada se suma después de la gracia, porque `InvoiceServices` extiende desde la fecha de expiración vigente.
+
+### Cómo se probó
+- `./mvnw -o compile`: BUILD SUCCESS.
+- `./mvnw -o test -Dtest=GraceTimeUtilsTest,ZipCodeUtilsTest`: 10 pruebas, 0 fallos.
+- Script SQL en la base local (`RMPAY`), dentro de `BEGIN TRAN ... ROLLBACK`:
+  - La primera ejecución reemplaza la restricción.
+  - La segunda no cambia nada (es idempotente).
+  - Un `INSERT` con `TERMINAL_GRACE_GRANTED` pasa.
+  - El ROLLBACK deja la base sin cambios.
+  - La primera versión del script tenía un error de sintaxis (`EXEC('...' + QUOTENAME(...))`) y se corrigió con `sp_executesql`.
+- Front: `npx ng build --configuration development`, sin errores en los archivos modificados.
+- No probado: el endpoint con el backend levantado ni la pantalla en el navegador.
+
+---
+
 ## 2026-11-23 — Zip code obligatorio en BlackStone (BMS Pay)
 
 **Motivo:** requisito obligatorio de BlackStone: el zip code debe viajar siempre, con valor válido, en todas las transacciones.

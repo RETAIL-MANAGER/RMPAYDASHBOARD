@@ -4,6 +4,31 @@ Registro fechado, en lenguaje sencillo, de lo que cambia para los usuarios y la 
 
 ---
 
+## 2026-11-24 — Tiempo de gracia (tiempo gratis) para clientes
+
+**Descripción**
+- Desde **Editar cliente**, un administrador puede dar **tiempo gratis** a una terminal (botón **"Dar gracia"**) o a todas las terminales del negocio (**"Gracia a todas"**).
+- Se elige la cantidad en **días (máximo 30)** u **horas (máximo 720)** y se escribe un **motivo obligatorio**.
+- Si la terminal está **vigente**, el tiempo se suma a su fecha de vencimiento. Por ejemplo: vence el 10, se dan 5 días y pasa a vencer el 15.
+- Si está **vencida o desactivada**, se **reactiva de inmediato** y el tiempo cuenta desde ese momento. Por ejemplo: está vencida, se dan 2 días y queda activa por 2 días desde ahora.
+- Solo el rol **administrador (`ROLE_MANAGER`)** ve los botones y puede usar la función. Los usuarios de solo lectura y los clientes no pueden.
+- Cada vez que se da tiempo queda registrado quién lo dio, cuánto, por qué y las fechas anterior y nueva.
+
+**Motivo:** permitir cortesías, periodos de prueba y tiempo de gracia mientras se resuelve un pago.
+
+**Elementos afectados:** pantalla de edición del cliente (solo administradores), vigencia de las terminales y registro de actividad.
+
+**Riesgos / acciones operativas**
+- **El tiempo es un regalo:** si el cliente paga durante la gracia, el mes pagado empieza cuando termina la gracia.
+- **El cobro automático se corre:** con autopago, el cobro ocurre en la nueva fecha de vencimiento.
+- **Las horas no cortan a la hora exacta:** la desactivación automática corre una vez al día. Una gracia de pocas horas deja la terminal activa hasta la siguiente revisión diaria, aunque la sesión de la app sí vence a la hora indicada.
+- **Negocio desactivado:** si el negocio fue desactivado manualmente, dar gracia a sus terminales no lo reactiva.
+- **Script previo:** antes de publicar esta versión hay que ejecutar en la base de datos el script `docs/sql/2026-11-24_tiempo_de_gracia.sql`.
+
+**Cómo se verificó:** compilación y pruebas unitarias del backend, prueba del script en la base local (revertida) y compilación del front. Pendiente: prueba funcional en el portal.
+
+---
+
 ## 2026-11-23 — Zip code obligatorio para pagos con tarjeta (BlackStone)
 
 **Descripción**
